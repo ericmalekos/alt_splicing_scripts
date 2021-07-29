@@ -5,10 +5,14 @@ for i in *fastq.gz; do fastqc $i -t 8 -o <out_dir> ; done
 
 for i in *.bam; do fastqc $i -t 8 -o <out_dir> ; done
 
-## Samtools v1.9
-
+## Samtools v1.9 
 # Remove duplicates
 for i in *.bam; do samtools fixmate -m -@ 4 ${i} - |  samtools markdup -r -l 100 -s -@ 8 - mrkdup_${i}; done
+
+samtools idxstats in.bam | awk '{print $1" "$3}'
+
+# Remove non-canonical chromomes
+for i in *.bam; do samtools view -b -@ 8 $i chr{1..19} chrX chrY > chr_${i} ; done
 
 # Index
 for i in *.bam; do samtools index -@ 8 $i; done
@@ -18,6 +22,9 @@ samtools idxstats in.bam | awk '{print $1" "$3}'
 
 # Remove non-canonical chromosomes
 for i in *.bam; do samtools view -b -@ 8 $i chr{1..19} chrX chrY > chr_${i} ; done
+
+# Determine read lengths
+samtools view bmdm_ko_lps_mm010_mm10.ih1.rd1.xpe.yc.star.map.trk.bam | cut -f 10 | perl -ne 'chomp;print length($_) . "\n"' |sort |uniq 
 
 ## JuncBASE
 # JuncBASE was run as described in the manual using the `by_chr` options wherever possible.

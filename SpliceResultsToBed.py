@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 
 '''
 Utility for filtering the statistical analysis output from rMATS and DRIMSeq.
@@ -8,6 +9,11 @@ To obtain correctly sorted BED file run as:
     python SpliceResultsToBed.py -p rmats -e RI -i RI.MATS.JCEC.txt | sort -k1,1V -k2,2n -k3,3n
 
     python SpliceResultsToBed.py -p drimseq -e RI -i drimResults_intron_retention.tsv --known | sort -k1,1V -k2,2n -k3,3n
+
+To run on directory and remove empty files after:
+
+    for i in ../COPD/Splicing/Drimseq/*.tsv; do  python SpliceResultsToBed.py -p drimseq -q 0.1 -i $i > $i.bed ; done \
+    && find ../COPD/Splicing/Drimseq/ -name '*.bed' -size 0 -print0 | xargs -0 rm
 
 TODO:
     - implement juncbase option
@@ -20,6 +26,12 @@ import argparse
 import sys
 
 from pandas.core import indexing
+
+#TODO What are these: jcn_only_AA, jcn_only_AD
+
+juncBASEEventDict = {'A5SS': ['alternative_donor', 'jcn_only_AD'], 'A3SS': ['alternative_acceptor', 'jcn_only_AA'],
+                    'SE': ['cassette'], 'RI': ['intron_retention'], 'MXE': ['mutually_exclusive'],
+                    'COORD': ['coord_cassette'], 'AFE': ['alternative_first_exon'], 'ALE': ['alternative_first_exon']}
 
 def parseCommandLine():
     parser = argparse.ArgumentParser(description='Convert alternative splicing results to BED format')
@@ -70,7 +82,12 @@ def rMATStoBED(df, eventType):
     if eventType == 'RI':
         df[["chr", "upstreamEE", "downstreamES", "GeneID", "FDR", "strand"]].apply(tabSplitRow,axis=1)
     
-
+def checkNonempty(df):
+    if df.shape[0] == 0:
+        sys.stderr.write("There are not results after filtering, exiting.\n")
+        sys.exit()
+    else:
+        return True
 
 def preprocessDRIMSeq(fileIn, adjP, save="", k=False):
     sys.stderr.write("Processing DRIMSeq file: " + fileIn + "\n")
@@ -80,22 +97,42 @@ def preprocessDRIMSeq(fileIn, adjP, save="", k=False):
     if k:
         sys.stderr.write("Removing Novel Events\n")
         df = df[df.Event.apply(knownOnly)]
-    sys.stderr.write("Number of event entries before processing: " + str(df.shape[0]) + "\n")
+    sys.stderr.write("Number of event entries after processing: " + str(df.shape[0]) + "\n")
     
+    checkNonempty(df)
+
     #print(df)
     if len(save) > 0:
         df.to_csv(save, sep='\t', index=False)
     
     return df
 
-def DRIMtoBED(df):
+def DRIMtoBED(df, eventType):
+    #print(df)
     events = df['Event'].tolist()
-
-    bed_list = []
+    #print(events)
     for event in events:
         l = event.split(";")[1].split(":")
-        bed_entry = "\t".join([l[0],l[1].split("-")[0],l[1].split("-")[1], event.split(";")[-2]+ ";" + event.split(";")[-1]])
+        bed_entry = "\t".join([l[0],l[1].split("-")[0],l[1].split("-")[1], event.split(";")[0], 
+                    df[df['Event'] == event].adj_pvalue.to_string(index=False), "."])
         print(bed_entry)
+        
+def preprocessJuncBASE(fileIn, adjP, eventType, save=""):
+    sys.stderr.write("Processing JuncBASE file: " + fileIn + "\n")
+    df = pd.read_csv(fileIn, sep='\t', header=0).sort_values(by=['as_event_type', 'corrected_pvalue'])
+    sys.stderr.write("Number of event entries before processing: " + str(df.shape[0]) + "\n")
+    df = df[(df.corrected_pvalue <= adjP)]
+
+    sys.stderr.write("Number of event entries after processing by corrected_pvalue and event type: " + str(df.shape[0]) + "\n")
+
+    df = df[(df.corrected_pvalue <= adjP)]
+    
+    df = df[(df.as_event_type == eventType)]
+
+    if len(save) > 0:
+        df.to_csv(save, sep='\t', index=False)
+
+    return df
     
 
 def main():
@@ -105,9 +142,11 @@ def main():
         rMATStoBED(preprocessRMATS(fileIn=args.input, FDR=args.padj, inclevel=args.inclusionLevel, 
                         readSupport=args.minCount, save=args.saveAs), eventType=args.event)
 
-
     if args.program == "drimseq":
-        DRIMtoBED(preprocessDRIMSeq(fileIn=args.input, adjP=args.padj, save=args.saveAs, k=args.known))
+        DRIMtoBED(preprocessDRIMSeq(fileIn=args.input, adjP=args.padj, save=args.saveAs, k=args.known), eventType=args.event)
+        
+    # if args.program == "juncbase":
+    #     JuncBASEtoBED(preprocessJuncBASE(fileIn=args.input, adjP=args.padj, save=args.saveAs, k=args.known, eventType=args.event))
 
 
 if __name__ == "__main__":
